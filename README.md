@@ -1,4 +1,4 @@
-![Logo](http://github.com/MATHEMA-GmbH/Owl-Racer-AI/blob/main/doc/owlracer-logo.png)
+![Logo](https://github.com/MATHEMA-GmbH/Owl-Racer-AI/blob/main/doc/owlracer-logo.png?raw=true)
 
 # Owl Racer ML.Net Client
 
