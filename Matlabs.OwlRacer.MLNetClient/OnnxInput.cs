@@ -1,14 +1,7 @@
 ﻿using System;
-using System.Net.Http.Headers;
-using System.Threading.Tasks;
-using Grpc.Core;
-using Grpc.Net.Client;
-using Matlabs.OwlRacer.Protobuf;
-using Microsoft.ML;
 using Microsoft.ML.Data;
 using Microsoft.ML.Transforms.Onnx;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace Matlabs.OwlRacer.MLNetClient
 {
