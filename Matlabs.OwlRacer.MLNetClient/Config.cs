@@ -1,8 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Matlabs.OwlRacer.MLNetClient
 {
@@ -13,5 +9,6 @@ namespace Matlabs.OwlRacer.MLNetClient
         public string Model { get; set; } = string.Empty;
         public string CarName { get; set; } = string.Empty;
         public string CarColor { get; set; } = string.Empty;
+        public int Version { get; set; } = default;
     }
 }
