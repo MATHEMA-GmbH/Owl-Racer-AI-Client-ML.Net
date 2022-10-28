@@ -10,5 +10,6 @@ namespace Matlabs.OwlRacer.MLNetClient
         public string CarName { get; set; } = string.Empty;
         public string CarColor { get; set; } = string.Empty;
         public int Version { get; set; } = default;
+        public string Labelmap { get; set; } = string.Empty;
     }
 }

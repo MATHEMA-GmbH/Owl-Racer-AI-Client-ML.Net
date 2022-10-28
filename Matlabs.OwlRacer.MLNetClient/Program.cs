@@ -1,20 +1,26 @@
 ﻿using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using Grpc.Core;
 using Matlabs.OwlRacer.Protobuf;
 using Microsoft.Extensions.Configuration;
 using Microsoft.ML;
+using YamlDotNet.Serialization;
 
 namespace Matlabs.OwlRacer.MLNetClient
 {
     public static class Program
     {
         private static Config _config;
+        private static Dictionary<Int64, Int64> labelmap_dict = new Dictionary<Int64, Int64>();
 
         public static async Task Main(string[] args)
         {
             ParseConfig(args);
+
+            setConfigMapEntries();
 
             // Prepare some control variables and objects.
             GrpcCoreService.GrpcCoreServiceClient client = null;
@@ -85,6 +91,23 @@ namespace Matlabs.OwlRacer.MLNetClient
             await Task.CompletedTask;
         }
 
+        private static void setConfigMapEntries()
+        {
+            Console.WriteLine($"_config.Labelmap: {_config.Labelmap}");
+            string text = System.IO.File.ReadAllText(_config.Labelmap);
+
+            var deserializer = new Deserializer();
+            var result = deserializer.Deserialize<Dictionary<string, Dictionary<Int64, Int64>>>(new StringReader(text));
+
+            foreach (var item in result)
+            {
+                foreach (var subitem in item.Value)
+                {
+                    labelmap_dict.Add(subitem.Key, subitem.Value);
+                }
+            }
+        }
+
         private static void ParseConfig(string[] args)
         {
             var builder = new ConfigurationBuilder();
@@ -113,7 +136,16 @@ namespace Matlabs.OwlRacer.MLNetClient
                 Environment.Exit(1);
             }
 
-            config.Model = model;
+            config.Model = Path.GetFullPath(Path.Join(Directory.GetCurrentDirectory(), model));
+            var labelmap = Path.Join(Path.GetDirectoryName(config.Model), "labelmap.yaml");
+
+            if (!File.Exists(labelmap))
+            {
+                Console.Error.WriteLine($"Unable to find labelmap '{labelmap}', the file does not exist!");
+                Environment.Exit(1);
+            }
+            config.Labelmap = labelmap;
+            
 
             if (Guid.TryParse(sessionString, out var sessionGuid))
             {
@@ -217,13 +249,14 @@ namespace Matlabs.OwlRacer.MLNetClient
                     };
 
                     var prediction = onnxPredictionEngine.Predict(engineInput);
+                    var command = labelmap_dict[prediction.Output_label[0]];
 
                     carData = await client.GetCarDataAsync(carData.Id);
                     carData = await client.StepAsync(new StepData
                     {
                         CarId = carData.Id,
-                        Command = (StepData.Types.StepCommand)prediction.Output_label[0]
-                    });
+                        Command = (StepData.Types.StepCommand)command
+                    });                   
                 }
             }
             else
