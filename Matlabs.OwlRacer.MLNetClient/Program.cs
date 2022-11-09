@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
@@ -15,6 +14,10 @@ namespace Matlabs.OwlRacer.MLNetClient
     {
         private static Config _config;
         private static Dictionary<Int64, Int64> labelmap_dict = new Dictionary<Int64, Int64>();
+        // Create channel and gRPC client.
+        static readonly Channel grpcChannel = new Channel($"localhost:6003", ChannelCredentials.Insecure);
+        static GrpcCoreService.GrpcCoreServiceClient client = null;
+        static SessionData sessionData;
 
         public static async Task Main(string[] args)
         {
@@ -22,18 +25,11 @@ namespace Matlabs.OwlRacer.MLNetClient
 
             setConfigMapEntries();
 
-            // Prepare some control variables and objects.
-            GrpcCoreService.GrpcCoreServiceClient client = null;
             RaceCarData carData = null;
 
             try
             {
-                // Create channel and gRPC client.
-                Console.WriteLine("Creating channel and gRPC client.");
-                var grpcChannel = new Channel($"localhost:6003", ChannelCredentials.Insecure);
-                client = new GrpcCoreService.GrpcCoreServiceClient(grpcChannel);
-
-                SessionData sessionData;
+                CreateGrpcClientConnection();
                 if (_config.SessionId == null)
                 {
                     Console.WriteLine("Creating session...");
@@ -47,14 +43,10 @@ namespace Matlabs.OwlRacer.MLNetClient
                 else
                 {
                     Console.WriteLine("Joining session...");
-                    sessionData = await client.GetSessionAsync(new GuidData
-                    {
-                        GuidString = _config.SessionId.Value.ToString()
-                    });
+                    await UpdateSession();
                 }
 
                 Console.WriteLine($"Using session with ID: {sessionData.Id}");
-
                 // Create race car.
                 Console.WriteLine("Creating race car...");
                 carData = await client.CreateCarAsync(new CreateCarData
@@ -66,6 +58,12 @@ namespace Matlabs.OwlRacer.MLNetClient
                     MaxVelocity = 0.5f
                 });
                 Console.WriteLine($"Created car with ID: {carData.Id}");
+                while (sessionData.Phase == SessionData.Types.Phase.Prerace || sessionData.Phase == SessionData.Types.Phase.Pause)
+                {
+                    Console.WriteLine("Enter to prerace or pause state");
+                    await UpdateSession();
+                    await Task.Delay(100);
+                }
                 await RunModel(client, carData);
             }
             catch (Exception e)
@@ -89,6 +87,20 @@ namespace Matlabs.OwlRacer.MLNetClient
             }
 
             await Task.CompletedTask;
+        }
+
+        private static void CreateGrpcClientConnection()
+        {
+            Console.WriteLine("Creating channel and gRPC client.");
+            client = new GrpcCoreService.GrpcCoreServiceClient(grpcChannel);
+        }
+
+        private static async Task UpdateSession()
+        {
+            sessionData = await client.GetSessionAsync(new GuidData
+            {
+                GuidString = _config.SessionId.Value.ToString()
+            });
         }
 
         private static void setConfigMapEntries()
@@ -136,8 +148,8 @@ namespace Matlabs.OwlRacer.MLNetClient
                 Environment.Exit(1);
             }
 
-            config.Model = Path.GetFullPath(Path.Join(Directory.GetCurrentDirectory(), model));
-            var labelmap = Path.Join(Path.GetDirectoryName(config.Model), "labelmap.yaml");
+            config.Model = model;
+            var labelmap = Path.Combine(Path.GetDirectoryName(config.Model), "labelmap.yaml");
 
             if (!File.Exists(labelmap))
             {
@@ -229,7 +241,6 @@ namespace Matlabs.OwlRacer.MLNetClient
             MLContext mlContext = new();
 
             var onnxPredictionPipeline = GetPredictionPipeline(mlContext);
-
             if (_config.Version == (int)Version.VersionOne)
             {
                 var onnxPredictionEngine = mlContext.Model.CreatePredictionEngine<NewOnnxInput, OnnxOutput>(onnxPredictionPipeline);
@@ -250,7 +261,7 @@ namespace Matlabs.OwlRacer.MLNetClient
 
                     var prediction = onnxPredictionEngine.Predict(engineInput);
                     var command = labelmap_dict[prediction.Output_label[0]];
-
+                    
                     carData = await client.GetCarDataAsync(carData.Id);
                     carData = await client.StepAsync(new StepData
                     {
@@ -275,7 +286,6 @@ namespace Matlabs.OwlRacer.MLNetClient
                         Distance_Right = carData.Distance.Right
                     };
                     var prediction = onnxPredictionEngine.Predict(EngineInput);
-
 
                     carData = await client.GetCarDataAsync(carData.Id);
                     carData = await client.StepAsync(new StepData
