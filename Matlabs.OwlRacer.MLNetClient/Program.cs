@@ -19,6 +19,7 @@ namespace Matlabs.OwlRacer.MLNetClient
         static GrpcCoreService.GrpcCoreServiceClient client = null;
         static SessionData sessionData;
 
+        
         public static async Task Main(string[] args)
         {
             ParseConfig(args);
@@ -26,6 +27,8 @@ namespace Matlabs.OwlRacer.MLNetClient
             setConfigMapEntries();
 
             RaceCarData carData = null;
+
+            GuidListData interimResult = null;
 
             try
             {
@@ -64,7 +67,14 @@ namespace Matlabs.OwlRacer.MLNetClient
                     await UpdateSession();
                     await Task.Delay(100);
                 }
+
+
                 await RunModel(client, carData);
+
+            }
+            catch (MLNetException ex)
+            {
+                await Console.Error.WriteLineAsync(ex.Message.ToString());
             }
             catch (Exception e)
             {
@@ -77,8 +87,27 @@ namespace Matlabs.OwlRacer.MLNetClient
                     if (carData != null)
                     {
                         Console.WriteLine("Destroying car...");
-                        await client?.DestroyCarAsync(carData.Id);
+                        if (await client.GetCarIdsAsync(carData.SessionId) is null)
+                        {
+                            throw new MLNetException("Empty session #root");
+                        }
+                        else
+                        {
+                            interimResult = await client.GetCarIdsAsync(carData.SessionId);
+                        }
+                        if (interimResult.Guids.Contains(carData.Id) == false)
+                        {
+                            throw new MLNetException("Car already destroyed ... #root");
+                        }
+                        else
+                        {
+                            await client?.DestroyCarAsync(carData.Id);
+                        }
                     }
+                }
+                catch (MLNetException ex)
+                {
+                    await Console.Error.WriteLineAsync(ex.Message.ToString());
                 }
                 catch (Exception e)
                 {
@@ -239,7 +268,7 @@ namespace Matlabs.OwlRacer.MLNetClient
         {
             ////Load Model 
             MLContext mlContext = new();
-
+            GuidListData interimResult = await client.GetCarIdsAsync(carData.SessionId);
             var onnxPredictionPipeline = GetPredictionPipeline(mlContext);
             if (_config.Version == (int)Version.VersionOne)
             {
@@ -247,9 +276,28 @@ namespace Matlabs.OwlRacer.MLNetClient
 
                 while (true)
                 {
-                    var engineInput = new NewOnnxInput
+                    try
                     {
-                        Input = new float[] {
+                        if (client.GetSession(carData.SessionId) == null)
+                        {
+                            throw new MLNetException("Session not found");
+                        }
+                        if(await client.GetCarIdsAsync(carData.SessionId) is null)
+                        {
+                            throw new MLNetException("No cars in session");
+                        }
+                        else
+                        {
+                            interimResult = await client.GetCarIdsAsync(carData.SessionId);
+                        }
+                        if(interimResult.Guids.Contains(carData.Id) == false)
+                        {
+                            throw new MLNetException("Car not found");
+                        }
+                        
+                        var engineInput = new NewOnnxInput
+                        {
+                            Input = new float[] {
                             carData.Velocity,
                             carData.Distance.Front,
                             carData.Distance.FrontLeft,
@@ -257,17 +305,45 @@ namespace Matlabs.OwlRacer.MLNetClient
                             carData.Distance.Left,
                             carData.Distance.Right
                         }
-                    };
+                        };
 
-                    var prediction = onnxPredictionEngine.Predict(engineInput);
-                    var command = labelmap_dict[prediction.Output_label[0]];
-                    
-                    carData = await client.GetCarDataAsync(carData.Id);
-                    carData = await client.StepAsync(new StepData
+
+                        var prediction = onnxPredictionEngine.Predict(engineInput);
+                        var command = labelmap_dict[prediction.Output_label[0]];
+                        
+                        try
+                        {
+                            carData = await client.GetCarDataAsync(carData.Id);
+                        }
+                        catch
+                        {
+                            throw new MLNetException("Couldn't find car data.");
+                        }
+                        
+                        try
+                        {
+                            carData = await client.StepAsync(new StepData
+                            {
+                                CarId = carData.Id,
+                                Command = (StepData.Types.StepCommand)command
+                            });
+                        }
+                        catch
+                        {
+                            throw new MLNetException("Couldn't update car step");
+                        }
+                        
+
+                    }
+                    catch(Exception ex)
                     {
-                        CarId = carData.Id,
-                        Command = (StepData.Types.StepCommand)command
-                    });                   
+                        throw;
+                    }
+                    if (client.RaceIsFinished(sessionData.Id).IsFinished == true)
+                    {
+                        Environment.Exit(0);
+                    }
+
                 }
             }
             else
@@ -276,23 +352,69 @@ namespace Matlabs.OwlRacer.MLNetClient
 
                 while (true)
                 {
-                    var EngineInput = new OnnxInput
+                    try
                     {
-                        Velocity = carData.Velocity,
-                        Distance_Front = carData.Distance.Front,
-                        Distance_FrontLeft = carData.Distance.FrontLeft,
-                        Distance_FrontRight = carData.Distance.FrontRight,
-                        Distance_Left = carData.Distance.Left,
-                        Distance_Right = carData.Distance.Right
-                    };
-                    var prediction = onnxPredictionEngine.Predict(EngineInput);
+                        if (client.GetSession(carData.SessionId) == null)
+                        {
+                            throw new MLNetException("Session not found (Second Script)");
+                        }
+                        if (await client.GetCarIdsAsync(carData.SessionId) is null)
+                        {
+                            throw new MLNetException("No cars in session (Second Script)");
+                        }
+                        else
+                        {
+                            interimResult = await client.GetCarIdsAsync(carData.SessionId);
+                        }
+                        if (interimResult.Guids.Contains(carData.Id) == false)
+                        {
+                            throw new MLNetException("Car not found (Second Script)");
+                        }
 
-                    carData = await client.GetCarDataAsync(carData.Id);
-                    carData = await client.StepAsync(new StepData
+                        var EngineInput = new OnnxInput
+                        {
+                            Velocity = carData.Velocity,
+                            Distance_Front = carData.Distance.Front,
+                            Distance_FrontLeft = carData.Distance.FrontLeft,
+                            Distance_FrontRight = carData.Distance.FrontRight,
+                            Distance_Left = carData.Distance.Left,
+                            Distance_Right = carData.Distance.Right
+                        };
+                        var prediction = onnxPredictionEngine.Predict(EngineInput);
+
+
+                        try
+                        {
+                            carData = await client.GetCarDataAsync(carData.Id);
+                        }
+                        catch
+                        {
+                            throw new MLNetException("Couldn't find car data (Second Script)");
+                        }
+
+                        try
+                        {
+                            carData = await client.StepAsync(new StepData
+                            {
+                                CarId = carData.Id,
+                                Command = (StepData.Types.StepCommand)prediction.Output_label[0]
+                            });
+                        }
+                        catch
+                        {
+                            throw new MLNetException("Couldn't Update car step (Second Script)");
+                        }
+                    }
+                    catch(Exception ex)
                     {
-                        CarId = carData.Id,
-                        Command = (StepData.Types.StepCommand)prediction.Output_label[0]
-                    });
+                        throw;
+                    }
+                    if (client.RaceIsFinished(sessionData.Id).IsFinished == true)
+                    {
+                        Environment.Exit(0);
+                    }
+
+
                 }
             }
         }
